@@ -41,23 +41,27 @@ jobs:
       - name: Build EXE (x64)
         shell: msys2 {0}
         env:
-          # Ensure we build against the MINGW64 toolchain/GTK
           MSYSTEM: MINGW64
           CHERE_INVOKING: "1"
+          # expose setup-go's installation root to this step
+          GOROOT: ${{ env.GOROOT }}
         run: |
           set -euxo pipefail
 
-          # Ensure mingw toolchain is first (for gcc, pkg-config, gtk4, etc.)
+          # MSYS2 toolchain first
           export PATH="/mingw64/bin:$PATH"
 
-          # Use Windows Go installed by setup-go
-          command -v go.exe || true
+          # Add Go from actions/setup-go to PATH (Windows path -> MSYS path)
+          if [ -n "${GOROOT:-}" ]; then
+            goroot_msys="$(cygpath -u "$GOROOT")"
+            export PATH="$goroot_msys/bin:$PATH"
+          fi
+
           command -v go || true
+          go env
 
-          go.exe env
-          CGO_ENABLED=1 go.exe build -v -o dist/app/hello-gtk4.exe .
-
-      - name: Copy GTK runtime DLLs into dist/app
+          mkdir -p dist/app
+          CGO_ENABLED=1 go build -v -o dist/app/hello-gtk4.exe .      - name: Copy GTK runtime DLLs into dist/app
         shell: msys2 {0}
         run: |
           set -euxo pipefail
