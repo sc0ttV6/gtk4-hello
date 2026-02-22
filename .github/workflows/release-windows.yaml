@@ -62,6 +62,7 @@ jobs:
 
           mkdir -p dist/app
           CGO_ENABLED=1 go build -v -o dist/app/hello-gtk4.exe .      - name: Copy GTK runtime DLLs into dist/app
+      - name: Copy GTK runtime DLLs into dist/app
         shell: msys2 {0}
         run: |
           set -euxo pipefail
