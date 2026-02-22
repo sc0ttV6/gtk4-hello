@@ -46,7 +46,7 @@ jobs:
           CHERE_INVOKING: "1"
         run: |
           set -euxo pipefail
-          export PATH="/mingw64/bin:$PATH"
+          export PATH="$(cygpath -u "${GOROOT}")/bin:/mingw64/bin:$PATH"
           export CGO_ENABLED=1
           mkdir -p dist/app
           go env
