@@ -1,0 +1,126 @@
+name: Build Windows (GTK4) and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          # optionally omit and let it read go.mod (but ensure go.mod has a real version)
+          go-version: "1.22.x"
+          cache: true
+
+      - name: Setup MSYS2 (MINGW64)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-gtk4
+            mingw-w64-x86_64-glib2
+            mingw-w64-x86_64-pango
+            mingw-w64-x86_64-cairo
+            mingw-w64-x86_64-gdk-pixbuf2
+            mingw-w64-x86_64-graphene
+            mingw-w64-x86_64-harfbuzz
+
+      - name: Build EXE (x64)
+        shell: msys2 {0}
+        env:
+          # Ensure we build against the MINGW64 toolchain/GTK
+          MSYSTEM: MINGW64
+          CHERE_INVOKING: "1"
+        run: |
+          set -euxo pipefail
+          export PATH="/mingw64/bin:$PATH"
+          export CGO_ENABLED=1
+          mkdir -p dist/app
+          go env
+          go build -v -o dist/app/hello-gtk4.exe .
+
+      - name: Copy GTK runtime DLLs into dist/app
+        shell: msys2 {0}
+        run: |
+          set -euxo pipefail
+          export PATH="/mingw64/bin:$PATH"
+
+          # Copy all DLL dependencies of the exe (recursively) from /mingw64/bin
+          # ldd prints paths to dlls; we filter ones coming from /mingw64/bin and copy them.
+          exe="dist/app/hello-gtk4.exe"
+
+          mkdir -p dist/app
+
+          # helper: copy direct deps from ldd
+          copy_deps() {
+            ldd "$1" \
+              | awk '/=>/ {print $3}' \
+              | grep -E '^/mingw64/bin/.*\.dll$' || true
+          }
+
+          # breadth-first copy to catch transitive deps
+          copied="dist/.copied.txt"
+          : > "$copied"
+
+          queue="$(copy_deps "$exe" | sort -u)"
+          while [ -n "${queue:-}" ]; do
+            newqueue=""
+            for dll in $queue; do
+              base="$(basename "$dll")"
+              if ! grep -qx "$base" "$copied"; then
+                cp -v "$dll" "dist/app/$base"
+                echo "$base" >> "$copied"
+                # scan deps of copied dll too
+                deps="$(copy_deps "$dll" | sort -u)"
+                newqueue="$newqueue $deps"
+              fi
+            done
+            queue="$(echo $newqueue | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//')"
+          done
+
+          # Also copy GDK Pixbuf loaders and GTK schemas if you want icons/images to work broadly.
+          # These are commonly needed depending on what your app uses.
+          mkdir -p dist/app/lib/gdk-pixbuf-2.0
+          if [ -d /mingw64/lib/gdk-pixbuf-2.0 ]; then
+            cp -r /mingw64/lib/gdk-pixbuf-2.0/* dist/app/lib/gdk-pixbuf-2.0/ || true
+          fi
+
+          mkdir -p dist/app/share/glib-2.0/schemas
+          if [ -d /mingw64/share/glib-2.0/schemas ]; then
+            cp -r /mingw64/share/glib-2.0/schemas/* dist/app/share/glib-2.0/schemas/ || true
+          fi
+
+          # Optional: compile schemas (usually not strictly required for simple apps, but good practice)
+          if command -v glib-compile-schemas >/dev/null 2>&1; then
+            glib-compile-schemas dist/app/share/glib-2.0/schemas || true
+          fi
+
+      - name: Create portable zip
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "${{ github.ref_name }}"
+          $zipName = "hello-gtk4-windows-x64-$tag.zip"
+          if (Test-Path $zipName) { Remove-Item $zipName -Force }
+          Compress-Archive -Path "dist/app/*" -DestinationPath $zipName
+          "ZIP_NAME=$zipName" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Create GitHub Release and upload zip
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ZIP_NAME }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
