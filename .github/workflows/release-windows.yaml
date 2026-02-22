@@ -46,11 +46,16 @@ jobs:
           CHERE_INVOKING: "1"
         run: |
           set -euxo pipefail
-          export PATH="$(cygpath -u "${GOROOT}")/bin:/mingw64/bin:$PATH"
-          export CGO_ENABLED=1
-          mkdir -p dist/app
-          go env
-          go build -v -o dist/app/hello-gtk4.exe .
+
+          # Ensure mingw toolchain is first (for gcc, pkg-config, gtk4, etc.)
+          export PATH="/mingw64/bin:$PATH"
+
+          # Use Windows Go installed by setup-go
+          command -v go.exe || true
+          command -v go || true
+
+          go.exe env
+          CGO_ENABLED=1 go.exe build -v -o dist/app/hello-gtk4.exe .
 
       - name: Copy GTK runtime DLLs into dist/app
         shell: msys2 {0}
